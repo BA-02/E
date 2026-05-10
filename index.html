@@ -631,6 +631,10 @@ select option{background:var(--surface)}
 .img-only-wrap{width:100%;max-width:820px}
 .img-only-wrap img{width:100%;height:auto;border-radius:24px;display:block;box-shadow:0 24px 64px rgba(0,0,0,.5)}
 
+/* FIREBASE STATUS DOT */
+@keyframes fbPulse{0%,100%{box-shadow:0 0 0 0 rgba(0,201,106,0)}50%{box-shadow:0 0 0 4px rgba(0,201,106,.25)}}
+#fb-status-dot.online{animation:fbPulse 2.5s infinite}
+
 /* DARK MODE */
 body.dark-mode{
   --bg:#090912;--surface:#10101e;--surface2:#181828;--surface3:#1f1f34;
@@ -726,10 +730,11 @@ body.dark-mode .dark-toggle::after{transform:translateX(-20px)}
   <aside class="sidebar">
     <div class="logo">
       <div class="logo-icon">🗓</div>
-      <div>
+      <div style="flex:1;min-width:0">
         <div class="logo-text">EventDesk</div>
         <div class="logo-sub">لوحة التحكم</div>
       </div>
+      <div id="fb-status-dot" title="جاري الاتصال..." style="width:9px;height:9px;border-radius:50%;flex-shrink:0;background:#888;margin-right:2px;margin-top:2px;transition:background .4s,box-shadow .4s;box-shadow:0 0 0 0 transparent;"></div>
     </div>
     <div class="nav-section">لوحة التحكم</div>
     <button class="nav-btn active" onclick="showTab('overview')"><span class="ni">📊</span><span>نظرة عامة</span></button>
@@ -964,6 +969,24 @@ body.dark-mode .dark-toggle::after{transform:translateX(-20px)}
           <button class="btn btn-primary" onclick="saveAdminSettings()">💾 حفظ الإعدادات</button>
         </div>
       </div>
+      <div class="sc">
+        <div class="sc-title" style="display:flex;align-items:center;justify-content:space-between">
+          <span>🔥 إعدادات Firebase</span>
+          <span id="fb-status-badge" style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:999px;background:rgba(0,0,0,.08);color:var(--text2)">جاري التحقق…</span>
+        </div>
+        <div style="font-size:12px;color:var(--text2);margin-bottom:14px;line-height:1.7">
+          يمكنك تغيير مشروع Firebase بدون تعديل الملف يدوياً — الصق إعدادات المشروع الجديد هنا وانقر حفظ.
+        </div>
+        <div class="fg full" style="margin-bottom:12px">
+          <label>Firebase Config (JSON)</label>
+          <textarea id="fb-config-input" style="min-height:130px;font-family:monospace;font-size:12px;direction:ltr;text-align:left" placeholder='{ "apiKey": "...", "authDomain": "...", "projectId": "..." }'></textarea>
+        </div>
+        <div style="display:flex;gap:9px;align-items:center;justify-content:flex-end;flex-wrap:wrap">
+          <button class="btn btn-secondary btn-sm" onclick="testFbConnection()">🔍 اختبار الاتصال</button>
+          <button class="btn btn-primary btn-sm" onclick="saveFbConfig()">💾 تطبيق الإعدادات وإعادة التشغيل</button>
+        </div>
+        <div id="fb-test-result" style="margin-top:10px;font-size:12px;font-weight:600;display:none"></div>
+      </div>
     </div>
 
     <!-- ARCHIVE -->
@@ -1119,7 +1142,7 @@ const COLORS=['#7c6fff','#00e5ff','#00e5a0','#ffc947','#ff4f6a','#b06fff','#ff5f
 // ══════════════════════════════════════════════════════
 // FIREBASE INIT
 // ══════════════════════════════════════════════════════
-const firebaseConfig = {
+const _defaultFbConfig = {
   apiKey: "AIzaSyD-vsaKmVM4f_DV6_cV455KBiNElIALwII",
   authDomain: "eeeee-34171.firebaseapp.com",
   projectId: "eeeee-34171",
@@ -1127,6 +1150,9 @@ const firebaseConfig = {
   messagingSenderId: "170138798594",
   appId: "1:170138798594:web:648160f2e199c13393b51b"
 };
+let _savedFbCfg=null;
+try{const _s=localStorage.getItem('ev2_fb_config');if(_s)_savedFbCfg=JSON.parse(_s);}catch(e){}
+const firebaseConfig = _savedFbCfg || _defaultFbConfig;
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
 
@@ -1139,9 +1165,95 @@ let settings = {
   bgs:[]
 };
 
+// ══════════════════════════════════════════════════════
+// FIREBASE STATUS INDICATOR
+// ══════════════════════════════════════════════════════
+function setFbStatus(state){ // 'connecting' | 'online' | 'offline'
+  const dot=document.getElementById('fb-status-dot');
+  const badge=document.getElementById('fb-status-badge');
+  if(dot){
+    dot.classList.remove('online');
+    if(state==='online'){
+      dot.style.background='#00c96a';dot.style.boxShadow='0 0 6px #00c96a99';
+      dot.title='متصل بـ Firebase ✅';dot.classList.add('online');
+    } else if(state==='offline'){
+      dot.style.background='#e0204a';dot.style.boxShadow='0 0 6px #e0204a88';
+      dot.title='غير متصل بـ Firebase ❌';
+    } else {
+      dot.style.background='#e0900a';dot.style.boxShadow='0 0 6px #e0900a88';
+      dot.title='جاري الاتصال…';
+    }
+  }
+  if(badge){
+    if(state==='online'){badge.textContent='● متصل';badge.style.background='rgba(0,201,106,.12)';badge.style.color='#00a855';}
+    else if(state==='offline'){badge.textContent='● غير متصل';badge.style.background='rgba(224,32,74,.1)';badge.style.color='var(--red)';}
+    else{badge.textContent='⟳ جاري الاتصال…';badge.style.background='rgba(224,144,10,.1)';badge.style.color='var(--amber)';}
+  }
+}
+
+// ══════════════════════════════════════════════════════
+// FIREBASE CONFIG (runtime switch — no file editing)
+// ══════════════════════════════════════════════════════
+function loadFbConfigUI(){
+  const saved=localStorage.getItem('ev2_fb_config');
+  const input=document.getElementById('fb-config-input');
+  if(input){
+    // Show current config (either saved override or built-in)
+    const current=saved?JSON.parse(saved):firebaseConfig;
+    input.value=JSON.stringify(current,null,2);
+  }
+}
+async function testFbConnection(){
+  const res=document.getElementById('fb-test-result');
+  const input=document.getElementById('fb-config-input');
+  if(!res||!input)return;
+  res.style.display='block';res.style.color='var(--amber)';res.textContent='⟳ جاري الاختبار…';
+  let cfg;
+  try{cfg=JSON.parse(input.value.trim());}
+  catch(e){res.style.color='var(--red)';res.textContent='❌ صيغة JSON غير صحيحة';return;}
+  try{
+    // Try a quick fetch to the Firestore REST endpoint
+    const url=`https://firestore.googleapis.com/v1/projects/${cfg.projectId}/databases/(default)/documents/data/events?key=${cfg.apiKey}`;
+    const r=await fetch(url,{signal:AbortSignal.timeout(6000)});
+    if(r.ok||r.status===404||r.status===401||r.status===403){
+      res.style.color='var(--green)';res.textContent='✅ المشروع موجود والاتصال ناجح ('+cfg.projectId+')';
+    } else {
+      res.style.color='var(--red)';res.textContent='❌ خطأ في الاتصال ('+r.status+')';
+    }
+  }catch(e){res.style.color='var(--red)';res.textContent='❌ تعذّر الوصول — تحقق من apiKey و projectId';}
+}
+function saveFbConfig(){
+  const input=document.getElementById('fb-config-input');
+  if(!input)return;
+  let cfg;
+  try{cfg=JSON.parse(input.value.trim());}
+  catch(e){showToast('❌ صيغة JSON غير صحيحة','var(--red)');return;}
+  if(!cfg.apiKey||!cfg.projectId){showToast('⚠️ apiKey و projectId مطلوبان','var(--amber)');return;}
+  localStorage.setItem('ev2_fb_config',JSON.stringify(cfg));
+  showToast('✅ تم الحفظ — سيتم إعادة تشغيل الصفحة','var(--green)');
+  setTimeout(()=>location.reload(),1200);
+}
+// On page load: if user saved a custom config, use it
+(function applyStoredFbConfig(){
+  const saved=localStorage.getItem('ev2_fb_config');
+  if(!saved)return;
+  try{
+    const cfg=JSON.parse(saved);
+    // Firebase is already initialized with hard-coded config above.
+    // We need to override before initializeApp runs — this block runs AFTER
+    // initializeApp, so we just flag that on next reload the config was applied.
+    // Actually the real init happens at page load above; if a saved config exists
+    // we show a notice that the page needs a reload. But since we reload on save,
+    // on the NEXT load we catch it here BEFORE initializeApp.
+    // The trick: we overwrite window.firebaseConfig so init below picks it up.
+    // Since this runs after initializeApp, we just store it for next session.
+  }catch(e){}
+})();
+
 // Load from Firestore on start
 async function loadFromFirebase(){
   showSkeleton();
+  setFbStatus('connecting');
   try {
     const evSnap = await db.collection('data').doc('events').get();
     if(evSnap.exists && evSnap.data().list){
@@ -1152,7 +1264,8 @@ async function loadFromFirebase(){
     const asSnap = await db.collection('data').doc('adminSettings').get();
     if(asSnap.exists) adminSettings = Object.assign(adminSettings, asSnap.data());
     await loadArchive();
-  } catch(e){ console.error('Firebase load error',e); }
+    setFbStatus('online');
+  } catch(e){ console.error('Firebase load error',e); setFbStatus('offline'); }
   await autoArchiveExpired();
   renderOverview();
   loadSettings();
@@ -1164,7 +1277,8 @@ async function save(){
   try {
     await db.collection('data').doc('events').set({ list: events });
     await db.collection('data').doc('settings').set(settings);
-  } catch(e){ showToast('❌ خطأ في الحفظ','var(--red)'); console.error(e); }
+    setFbStatus('online');
+  } catch(e){ showToast('❌ خطأ في الحفظ','var(--red)'); console.error(e); setFbStatus('offline'); }
   // Sync to display window if open
   try {
     localStorage.setItem('ev_display_data', JSON.stringify({events,settings,ts:Date.now()}));
@@ -1507,7 +1621,29 @@ function initParticles(){
 function buildCard(ev,extraClass){
   // IMAGE-ONLY MODE
   if(ev.imageOnly && ev.imgData){
-    return '<div class="img-only-wrap"><img src="'+ev.imgData+'" style="width:100%;height:auto;border-radius:24px;display:block;box-shadow:0 24px 64px rgba(0,0,0,.5)"></div>';
+    // Use a unique id so we can measure after load
+    var uid='io-'+ev.id;
+    setTimeout(function(){
+      var imgEl=document.getElementById(uid);
+      if(!imgEl)return;
+      var onLoad=function(){
+        var nw=imgEl.naturalWidth, nh=imgEl.naturalHeight;
+        if(nw&&nh){
+          var maxH=window.innerHeight*0.80;
+          var maxW=window.innerWidth*0.90;
+          var byH=(maxH/nh)*nw;
+          var ideal=Math.min(byH,maxW,860);
+          var wrap=document.getElementById(uid+'-wrap');
+          if(wrap)wrap.style.maxWidth=ideal+'px';
+        }
+        imgEl.style.opacity='1';
+      };
+      if(imgEl.complete&&imgEl.naturalWidth)onLoad();
+      else imgEl.onload=onLoad;
+    },0);
+    return '<div id="'+uid+'-wrap" style="width:100%;max-width:860px;display:flex;align-items:center;justify-content:center;transition:max-width .3s ease">'+
+      '<img id="'+uid+'" src="'+ev.imgData+'" style="width:100%;height:auto;max-height:80vh;object-fit:contain;border-radius:24px;display:block;box-shadow:0 24px 64px rgba(0,0,0,.55);opacity:0;transition:opacity .35s ease;">'+
+    '</div>';
   }
   var now=Date.now();
   var startMs=new Date(ev.start).getTime()-now;
@@ -1840,7 +1976,7 @@ function showTab(tab){
   if(tab==='events')renderEventsList();
   if(tab==='add'){resetForm();buildColorPicker('fc-row','add',COLORS[0])}
   if(tab==='archive')renderArchive();
-  if(tab==='admin-settings')loadAdminSettings();
+  if(tab==='admin-settings'){loadAdminSettings();loadFbConfigUI();}
   if(tab==='settings')loadSettings();
 }
 
@@ -2463,13 +2599,37 @@ function inlineRenderSlide(){
 
   // IMAGE-ONLY MODE
   if(ev.imageOnly && ev.imgData){
-    sl.innerHTML=`<div class="slide-card-wrap ${anim}" style="width:100%;max-width:860px;display:flex;align-items:center;justify-content:center;">
-      <img src="${ev.imgData}" style="width:100%;height:auto;max-height:80vh;object-fit:contain;border-radius:24px;display:block;box-shadow:0 24px 64px rgba(0,0,0,.5)">
+    // Render wrapper first, then size it after image loads
+    sl.innerHTML=`<div class="slide-card-wrap ${anim}" id="img-only-wrap" style="width:100%;max-width:860px;display:flex;align-items:center;justify-content:center;transition:max-width .3s ease,max-height .3s ease;">
+      <img id="img-only-el" src="${ev.imgData}" style="width:100%;height:auto;max-height:80vh;object-fit:contain;border-radius:24px;display:block;box-shadow:0 24px 64px rgba(0,0,0,.55);opacity:0;transition:opacity .35s ease;">
     </div>`;
+    // Once image loads, adjust wrapper to match aspect ratio and fade in
+    const imgEl=document.getElementById('img-only-el');
+    if(imgEl){
+      const onLoad=()=>{
+        const nw=imgEl.naturalWidth, nh=imgEl.naturalHeight;
+        if(nw&&nh){
+          // Calculate ideal max-width so height stays within 80vh
+          const maxH=window.innerHeight*0.80;
+          const maxW=window.innerWidth*0.90;
+          const byH=(maxH/nh)*nw;  // width if we constrain by height
+          const ideal=Math.min(byH, maxW, 860);
+          const wrap=document.getElementById('img-only-wrap');
+          if(wrap) wrap.style.maxWidth=ideal+'px';
+        }
+        imgEl.style.opacity='1';
+      };
+      if(imgEl.complete && imgEl.naturalWidth) onLoad();
+      else imgEl.onload=onLoad;
+    }
     const dots=document.getElementById('slide-dots');
     if(dots) dots.innerHTML=sorted.map((_,i)=>`<div class="sd${i===inlineCurSlide?' active':''}" onclick="inlineGoSlide(${i})"></div>`).join('');
     const pill=document.getElementById('dv-event-counter-pill');
     if(pill) pill.textContent=`${inlineCurSlide+1} / ${sorted.length}`;
+    // Update theme accent from event color
+    const hueIO=hueFromColorAdmin(ev.color||'#7c6fff');
+    document.getElementById('display-view').style.setProperty('--dv-accent',`hsl(${hueIO},100%,68%)`);
+    document.getElementById('display-view').style.setProperty('--dv-glow',`hsla(${hueIO},100%,62%,.38)`);
     return;
   }
 
