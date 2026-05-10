@@ -1259,6 +1259,18 @@ async function loadFromFirebase(){
     if(evSnap.exists && evSnap.data().list){
       events = evSnap.data().list.map(e=>({...e, badge: e.badge||''}));
     }
+    // حمّل صور الأحداث من مستنداتها المنفصلة
+    if(events.length){
+      const imgPromises = events.map(async ev => {
+        try{
+          const imgSnap = await db.collection('data').doc('img_'+ev.id).get();
+          if(imgSnap.exists && imgSnap.data().imgData){
+            ev.imgData = imgSnap.data().imgData;
+          }
+        }catch(ie){ /* صورة غير موجودة أو خطأ - تجاهل */ }
+      });
+      await Promise.all(imgPromises);
+    }
     const stSnap = await db.collection('data').doc('settings').get();
     if(stSnap.exists) settings = Object.assign(settings, stSnap.data());
     const asSnap = await db.collection('data').doc('adminSettings').get();
@@ -1275,7 +1287,24 @@ async function loadFromFirebase(){
 
 async function save(){
   try {
-    await db.collection('data').doc('events').set({ list: events });
+    // احفظ الأحداث بدون الصور في مستند منفصل (لتفادي حد 1MB في Firestore)
+    const eventsWithoutImgs = events.map(ev => {
+      const {imgData, ...rest} = ev;
+      return rest;
+    });
+    await db.collection('data').doc('events').set({ list: eventsWithoutImgs });
+
+    // احفظ صورة كل حدث في مستند منفصل خاص بها
+    const imgSavePromises = events.map(ev => {
+      if(ev.imgData){
+        return db.collection('data').doc('img_'+ev.id).set({ imgData: ev.imgData }).catch(e2=>{
+          console.error('فشل حفظ صورة الحدث '+ev.id, e2);
+        });
+      }
+      return Promise.resolve();
+    });
+    await Promise.all(imgSavePromises);
+
     await db.collection('data').doc('settings').set(settings);
     setFbStatus('online');
   } catch(e){ showToast('❌ خطأ في الحفظ','var(--red)'); console.error(e); setFbStatus('offline'); }
@@ -1928,14 +1957,31 @@ let selColorAdd = COLORS[0];
 let selColorEdit = COLORS[0];
 
 function triggerFile(id){ document.getElementById(id).click() }
+function compressImage(dataURL, maxW, maxH, quality, callback){
+  const img=new Image();
+  img.onload=function(){
+    let w=img.width, h=img.height;
+    const ratio=Math.min(1, maxW/w, maxH/h);
+    w=Math.round(w*ratio); h=Math.round(h*ratio);
+    const canvas=document.createElement('canvas');
+    canvas.width=w; canvas.height=h;
+    const ctx=canvas.getContext('2d');
+    ctx.drawImage(img,0,0,w,h);
+    callback(canvas.toDataURL('image/jpeg', quality));
+  };
+  img.src=dataURL;
+}
 function handleImg(input, prevId, dataId){
   const file=input.files[0]; if(!file)return;
   const r=new FileReader();
   r.onload=e=>{
-    const prev=document.getElementById(prevId); if(prev){prev.src=e.target.result;prev.style.display='block'}
-    let hid=document.getElementById(dataId);
-    if(!hid){hid=document.createElement('input');hid.type='hidden';hid.id=dataId;input.parentNode.appendChild(hid)}
-    hid.value=e.target.result;
+    // ضغط الصورة: حد أقصى 1200×900 بجودة 0.75 لتفادي تجاوز حد Firestore
+    compressImage(e.target.result, 1200, 900, 0.75, function(compressed){
+      const prev=document.getElementById(prevId); if(prev){prev.src=compressed;prev.style.display='block'}
+      let hid=document.getElementById(dataId);
+      if(!hid){hid=document.createElement('input');hid.type='hidden';hid.id=dataId;input.parentNode.appendChild(hid)}
+      hid.value=compressed;
+    });
   };
   r.readAsDataURL(file);
 }
@@ -2207,6 +2253,7 @@ async function saveEdit(){
 }
 async function delEvent(id){
   if(!confirm('حذف الحدث؟'))return;
+  try{ await db.collection('data').doc('img_'+id).delete(); }catch(e){}
   events=events.filter(e=>e.id!==id);await save();showToast('🗑 تم الحذف','var(--red)');renderEventsList();renderOverview();
 }
 
@@ -2274,7 +2321,14 @@ function hueFromHex(hex){
 function triggerBgFile(i){document.getElementById('bg-file-'+i).click()}
 function handleBgImg(input,i){
   const file=input.files[0];if(!file)return;
-  const r=new FileReader();r.onload=e=>{bgSlots[i].data=e.target.result;renderBgList()};r.readAsDataURL(file);
+  const r=new FileReader();
+  r.onload=e=>{
+    // ضغط صورة الخلفية: 1920×1080 بجودة 0.80
+    compressImage(e.target.result,1920,1080,0.80,function(compressed){
+      bgSlots[i].data=compressed;renderBgList();
+    });
+  };
+  r.readAsDataURL(file);
 }
 function addBgSlot(){bgSlots.push({data:'',hue:220,themeColor:'#7c6fff'});renderBgList()}
 function removeBg(i){bgSlots.splice(i,1);renderBgList()}
@@ -2306,7 +2360,17 @@ let archived = [];
 async function loadArchive(){
   try{
     const snap=await db.collection('data').doc('archive').get();
-    if(snap.exists&&snap.data().list)archived=snap.data().list;
+    if(snap.exists&&snap.data().list){
+      archived=snap.data().list;
+      // حمّل صور الأحداث المؤرشفة من مستنداتها المنفصلة
+      const imgPromises=archived.map(async ev=>{
+        try{
+          const imgSnap=await db.collection('data').doc('img_'+ev.id).get();
+          if(imgSnap.exists&&imgSnap.data().imgData) ev.imgData=imgSnap.data().imgData;
+        }catch(ie){}
+      });
+      await Promise.all(imgPromises);
+    }
   }catch(e){}
 }
 async function archiveEvent(id){
@@ -2315,7 +2379,9 @@ async function archiveEvent(id){
   archived.push({...ev,archivedAt:Date.now()});
   events=events.filter(e=>e.id!==id);
   await save();
-  await db.collection('data').doc('archive').set({list:archived});
+  // احفظ الأرشيف بدون الصور لتفادي تجاوز حجم المستند
+  const archivedWithoutImgs=archived.map(({imgData,...rest})=>rest);
+  await db.collection('data').doc('archive').set({list:archivedWithoutImgs});
   showToast('📦 تم الأرشفة','var(--amber)');renderEventsList();renderOverview();
 }
 function renderArchive(){
@@ -2338,10 +2404,17 @@ function renderArchive(){
 }
 async function restoreEvent(id){
   const ev=archived.find(e=>e.id===id);if(!ev)return;
-  events.push({...ev});
+  // حاول استعادة الصورة من مستندها المنفصل
+  let restoredEv={...ev};
+  try{
+    const imgSnap=await db.collection('data').doc('img_'+id).get();
+    if(imgSnap.exists&&imgSnap.data().imgData) restoredEv.imgData=imgSnap.data().imgData;
+  }catch(ie){}
+  events.push(restoredEv);
   archived=archived.filter(e=>e.id!==id);
   await save();
-  await db.collection('data').doc('archive').set({list:archived});
+  const archivedWithoutImgs=archived.map(({imgData,...rest})=>rest);
+  await db.collection('data').doc('archive').set({list:archivedWithoutImgs});
   showToast('↩️ تم الاستعادة','var(--green)');renderArchive();renderOverview();
 }
 
@@ -2892,7 +2965,7 @@ async function handleImport(input){
       if(data.settings)settings=Object.assign(settings,data.settings);
       if(data.adminSettings)adminSettings=Object.assign(adminSettings,data.adminSettings);
       await save();
-      if(archived.length)await db.collection('data').doc('archive').set({list:archived});
+      if(archived.length){const archivedWithoutImgs=archived.map(({imgData,...rest})=>rest);await db.collection('data').doc('archive').set({list:archivedWithoutImgs});}
       showToast('📥 تم الاستيراد بنجاح','var(--green)');
       renderOverview();renderEventsList();
     }catch(err){showToast('❌ ملف غير صالح','var(--red)');}
@@ -2901,6 +2974,11 @@ async function handleImport(input){
 }
 async function clearAllEvents(){
   if(!confirm('⚠️ سيتم مسح جميع الأحداث نهائياً. متأكد؟'))return;
+  // احذف مستندات الصور
+  try{
+    const delImgPromises=events.map(ev=>db.collection('data').doc('img_'+ev.id).delete().catch(()=>{}));
+    await Promise.all(delImgPromises);
+  }catch(e){}
   events=[];
   await save();
   showToast('🗑 تم مسح جميع الأحداث','var(--red)');
