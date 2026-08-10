@@ -185,6 +185,15 @@ select option{background:var(--surface)}
 .ev-name{font-size:14px;font-weight:700;margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ev-meta{font-size:11px;color:var(--text2);display:flex;gap:10px;flex-wrap:wrap}
 .ev-actions{display:flex;gap:6px;flex-shrink:0}
+/* تباين أوضح لأزرار الإجراءات (كانت تنطبق على خلفية البطاقة نفسها) */
+.ev-actions .btn-icon{
+  background:var(--surface);border:1px solid var(--border2);
+  width:32px;height:32px;padding:0;
+  display:flex;align-items:center;justify-content:center;
+  font-size:14px;box-shadow:0 1px 2px rgba(0,0,0,.04);
+}
+.ev-actions .btn-icon:hover{background:var(--surface3);transform:translateY(-1px)}
+.ev-actions .btn-danger.btn-icon{background:rgba(224,32,74,.08);border-color:rgba(224,32,74,.22)}
 
 /* STATUS BADGES */
 .bs{font-size:10px;font-weight:700;padding:3px 9px;border-radius:999px;letter-spacing:.05em;white-space:nowrap}
@@ -744,6 +753,19 @@ body.dark-mode .dark-toggle::after{transform:translateX(-20px)}
   .dv-slide-area{padding:70px 16px 80px}
   .upload-zone{padding:28px 18px;min-height:110px}
   .upload-zone p{font-size:13px}
+
+  /* بطاقة الحدث: من صف واحد مضغوط إلى صفّين واضحين بدل التداخل */
+  .ev-item{flex-wrap:wrap;padding:12px 14px;gap:10px}
+  .ev-thumb{width:44px;height:44px}
+  .ev-info{flex-basis:calc(100% - 58px)}
+  .ev-name{white-space:normal;font-size:13px}
+  .ev-actions{
+    order:3;flex-basis:100%;width:100%;
+    justify-content:flex-end;flex-wrap:wrap;
+    margin-top:4px;padding-top:8px;border-top:1px solid var(--border);
+  }
+  /* التلميحات (data-tip) تعتمد على hover ولا تعمل باللمس على الجوال */
+  [data-tip]:hover::after{content:none}
 }
 </style>
 </head>
