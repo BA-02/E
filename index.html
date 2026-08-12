@@ -1608,12 +1608,45 @@ function openDisplayWindow(){
     // Hide close button in standalone window
     const cb = document.getElementById('close-inline-btn');
     if(cb) cb.style.display='none';
-    // Listen for live updates
+    // Listen for live updates (same-device tabs)
     try {
       const bc = new BroadcastChannel('ev_display');
       bc.onmessage = function(e){
-        if(e.data && e.data.events){ events=e.data.events; settings=Object.assign(settings,e.data.settings||{}); }
+        if(e.data && e.data.events){ events=e.data.events; settings=Object.assign(settings,e.data.settings||{}); initInlineDisplay(); }
       };
+    } catch(e){}
+
+    // Listen for live updates from Firestore (cross-device — أي جهاز يعدّل، الشاشة تتحدث تلقائيًا)
+    try {
+      let dvRerenderTimer=null;
+      function dvScheduleRerender(){
+        if(dvRerenderTimer) clearTimeout(dvRerenderTimer);
+        dvRerenderTimer=setTimeout(function(){ initInlineDisplay(); }, 400);
+      }
+      db.collection('data').doc('events').onSnapshot(async function(snap){
+        if(!snap.exists || !snap.data().list) return;
+        const newList = snap.data().list;
+        // حافظ على الصور المحمّلة مسبقًا لنفس الحدث، وحمّل الصور الجديدة فقط
+        const oldById = {};
+        (events||[]).forEach(ev=>{ oldById[ev.id]=ev; });
+        const merged = await Promise.all(newList.map(async ev=>{
+          const prev = oldById[ev.id];
+          if(prev && prev.imgData) return {...ev, imgData: prev.imgData};
+          try {
+            const imgSnap = await db.collection('data').doc('img_'+ev.id).get();
+            if(imgSnap.exists && imgSnap.data().imgData) return {...ev, imgData: imgSnap.data().imgData};
+          } catch(ie){}
+          return {...ev, badge: ev.badge||''};
+        }));
+        events = merged;
+        dvScheduleRerender();
+      }, function(err){ console.error('display events listener error', err); });
+
+      db.collection('data').doc('settings').onSnapshot(function(snap){
+        if(!snap.exists) return;
+        settings = Object.assign(settings, snap.data());
+        dvScheduleRerender();
+      }, function(err){ console.error('display settings listener error', err); });
     } catch(e){}
   });
 })();
